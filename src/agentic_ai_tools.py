@@ -8,7 +8,10 @@ from thefuzz import fuzz
 import re
 import numpy as np
 from typing import Union, List, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Dict, Any, Optional
+import pandas as pd
+from sqlalchemy import create_engine
 
 load_dotenv(find_dotenv())
 DB_NAME=os.getenv('DB_NAME')
@@ -18,87 +21,7 @@ HOSTNAME=os.getenv('HOSTNAME')
 PORT=os.getenv('PORT')
 FUZZ_RATIO_THRESHOLD = os.getenv('FUZZ_RATIO_THRESHOLD')
 # Creating conneciton to database
-conn = psycopg2.connect(f"dbname={DB_NAME} user={USERNAME} password={PASSWORD}")
-
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Dict, Any, Optional
-import pandas as pd
-
-
-class DataFramePayload(BaseModel):
-    """
-    A structured payload for safely transporting pandas DataFrames
-    through LangChain tools and LLMs.
-
-    Stores:
-        - data (list of row dicts)
-        - columns (list of column names)
-        - index (optional)
-        - dtypes (optional, for better reconstruction)
-    """
-
-    data: List[Dict[str, Any]] = Field(
-        ..., description="Row-wise representation of the DataFrame."
-    )
-    columns: List[str] = Field(
-        ..., description="Column names of the DataFrame."
-    )
-    index: Optional[List[Any]] = Field(
-        default=None, description="Optional index values."
-    )
-    dtypes: Optional[Dict[str, str]] = Field(
-        default=None, description="Optional dtype mapping for reconstruction."
-    )
-
-    # -------------------------------
-    # Convert Payload → DataFrame
-    # -------------------------------
-    def to_df(self) -> pd.DataFrame:
-        df = pd.DataFrame(self.data, columns=self.columns)
-
-        # restore index if stored
-        if self.index is not None:
-            df.index = self.index
-
-        # restore dtypes where possible
-        if self.dtypes:
-            for col, dtype in self.dtypes.items():
-                try:
-                    df[col] = df[col].astype(dtype)
-                except Exception:
-                    # silently skip any casting errors
-                    pass
-
-        return df
-
-    # -------------------------------
-    # Create Payload From DataFrame
-    # -------------------------------
-    @classmethod
-    def from_df(cls, df: pd.DataFrame) -> "DataFramePayload":
-        return cls(
-            data=df.to_dict(orient="records"),
-            columns=df.columns.tolist(),
-            index=df.index.tolist(),
-            dtypes={col: str(dtype) for col, dtype in df.dtypes.items()},
-        )
-
-    # -------------------------------
-    # Validators
-    # -------------------------------
-    @field_validator("data")
-    def validate_data(cls, v):
-        if not isinstance(v, list):
-            raise ValueError("data must be a list of row dicts")
-        return v
-
-    @field_validator("columns")
-    def validate_columns(cls, v):
-        if not isinstance(v, list):
-            raise ValueError("columns must be a list of strings")
-        return v
-
-
+engine = create_engine(f'postgresql+psycopg2://{USERNAME}:{PASSWORD}@{HOSTNAME}/{DB_NAME}')
 
 def invoice_number_match(dataframe, reference_component, threshold):
     invoice_match=False
@@ -138,15 +61,15 @@ def fill_details(in_idx,index,payments_dataframe, accounts_receivables_dataframe
     return accounts_receivables_dataframe
 
 @tool
-def AccessAccountsReceivable()-> DataFramePayload:
+def AccessAccountsReceivable():
     """Function to access the accounts receivables data table in Postgres"""
-    accounts_receivables = pd.read_sql("SELECT * FROM accounts_receivable", conn)
+    accounts_receivables = pd.read_sql("SELECT * FROM accounts_receivable", engine)
     return accounts_receivables.to_dict()
 
 @tool
 def AccessPayments():
     """Function to access the payments received data table in postgress"""
-    payments = pd.read_sql("SELECT * FROM payments", conn)
+    payments = pd.read_sql("SELECT * FROM payments", engine)
     return payments.to_dict()
 
 # @tool
@@ -155,77 +78,77 @@ def AccessPayments():
 #     customers = pd.read_sql("SELECT * FROM customers", conn) 
 #     return customers
 
-# @tool
-# def PaymentReferenceSearch(ar: dict,  pr: dict) -> dict:
-#     """Fuzzy search of payment reference string for a similarity check of each string.
-#     The payments_dataframe has the output of AccessPayments as input. The accounts_receivables dataframe
-#     has the outut of AccessAccountsReceivable as input.
+@tool
+def PaymentReferenceSearch(ar: dict,  pr: dict) -> dict:
+    """Fuzzy search of payment reference string for a similarity check of each string.
+    The payments_dataframe has the output of AccessPayments as input. The accounts_receivables dataframe
+    has the outut of AccessAccountsReceivable as input.
 
-#     This function should only be used after the tools AccessAccountsReceivable and AccesssPayments have been used.
+    This function should only be used after the tools AccessAccountsReceivable and AccesssPayments have been used.
 
-#     Function returns the updated Accounts Receivable and payments dataframe.
-#     """
-#     fuzz_threshold = int(FUZZ_RATIO_THRESHOLD)
-#     payments_dataframe = pr.to_df()
-#     accounts_receivables_dataframe = ar.to_df()
-#     # Add additional column for payments_dataframe to categorise if payment has been matched or not.
-#     #payments_dataframe['matched'] = False
+    Function returns the updated Accounts Receivable and payments dataframe.
+    """
+    fuzz_threshold = int(FUZZ_RATIO_THRESHOLD)
+    payments_dataframe = pd.DataFrame(pr, index=[0,len(pr)])
+    accounts_receivables_dataframe = pd.DataFrame(ar, index=[0,len(ar)])
+    # Add additional column for payments_dataframe to categorise if payment has been matched or not.
+    #payments_dataframe['matched'] = False
 
-#     try:
-#         for index, row in payments_dataframe.iterrows():
-#             # Try first just the payment reference information
-#             print(str(row['payment_reference']))
-#             pattern = r"\s"
-#             string_list=re.split(pattern, str(row['payment_reference']))
-#             print(string_list)
-#             customer_match = False
-#             invoice_match = False
-#             for component in string_list:
-#                 component = component.strip()
-#                 print(f"Element: {component}")
-#                 if component == None:
-#                     pass
-#                 else:
-#                     # for i in range(1):
-#                     #     print(f"ROUND:{i}")
+    try:
+        for index, row in payments_dataframe.iterrows():
+            # Try first just the payment reference information
+            print(str(row['payment_reference']))
+            pattern = r"\s"
+            string_list=re.split(pattern, str(row['payment_reference']))
+            print(string_list)
+            customer_match = False
+            invoice_match = False
+            for component in string_list:
+                component = component.strip()
+                print(f"Element: {component}")
+                if component == None:
+                    pass
+                else:
+                    # for i in range(1):
+                    #     print(f"ROUND:{i}")
 
-#                     if customer_match:
-#                         # Invoice number match
-#                         print("Starting Invoice Number Match")
-#                         try:
-#                             in_idx, invoice_match = invoice_number_match(dataframe=accounts_receivables_dataframe,
-#                                     reference_component=component,
-#                                     threshold=fuzz_threshold)
+                    if customer_match:
+                        # Invoice number match
+                        print("Starting Invoice Number Match")
+                        try:
+                            in_idx, invoice_match = invoice_number_match(dataframe=accounts_receivables_dataframe,
+                                    reference_component=component,
+                                    threshold=fuzz_threshold)
                             
-#                         except Exception as e:
-#                             print(f"Error Invoice Match: {e}")
-#                             pass
+                        except Exception as e:
+                            print(f"Error Invoice Match: {e}")
+                            pass
                     
-#                     else:
+                    else:
                         
-#                         print("Starting Customer Number Match")
-#                         try:
-#                             cs_idx, customer_match = customer_number_match(dataframe=accounts_receivables_dataframe,
-#                                                 reference_component=component,
-#                                                 threshold=fuzz_threshold)
+                        print("Starting Customer Number Match")
+                        try:
+                            cs_idx, customer_match = customer_number_match(dataframe=accounts_receivables_dataframe,
+                                                reference_component=component,
+                                                threshold=fuzz_threshold)
 
-#                         except Exception as e:
-#                             print(f"Error Customer Match: {e}")
-#                             pass
+                        except Exception as e:
+                            print(f"Error Customer Match: {e}")
+                            pass
                         
-#                     if invoice_match == True and customer_match == True:
-#                         print("Invoice and Customer matched!")
-#                         payments_dataframe.loc[index,'matched'] = True
-#                         fill_details(in_idx,index, payments_dataframe,accounts_receivables_dataframe)
-#                         break
+                    if invoice_match == True and customer_match == True:
+                        print("Invoice and Customer matched!")
+                        payments_dataframe.loc[index,'matched'] = True
+                        fill_details(in_idx,index, payments_dataframe,accounts_receivables_dataframe)
+                        break
                      
-#                     else:
-#                       payments_dataframe.loc[index,'matched'] = False
+                    else:
+                      payments_dataframe.loc[index,'matched'] = False
                         
 
                 
-#     except Exception as e:
-#         print(f"OUTER ERROR: {e}")
-#         pass
+    except Exception as e:
+        print(f"OUTER ERROR: {e}")
+        pass
 
-#     return DataFramePayload.from_df(accounts_receivables_dataframe)
+    return accounts_receivables_dataframe.to_dict()

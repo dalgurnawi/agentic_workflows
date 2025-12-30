@@ -8,10 +8,7 @@ from thefuzz import fuzz
 import re
 import numpy as np
 from typing import Union, List, Dict
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Dict, Any, Optional
-import pandas as pd
-from sqlalchemy import create_engine
+from pydantic import BaseModel, Field
 
 load_dotenv(find_dotenv())
 DB_NAME=os.getenv('DB_NAME')
@@ -21,7 +18,11 @@ HOSTNAME=os.getenv('HOSTNAME')
 PORT=os.getenv('PORT')
 FUZZ_RATIO_THRESHOLD = os.getenv('FUZZ_RATIO_THRESHOLD')
 # Creating conneciton to database
-engine = create_engine(f'postgresql+psycopg2://{USERNAME}:{PASSWORD}@{HOSTNAME}/{DB_NAME}')
+conn = psycopg2.connect(f"dbname={DB_NAME} user={USERNAME} password={PASSWORD}")
+
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Dict, Any, Optional
+import pandas as pd
 
 
 class DataFramePayload(BaseModel):
@@ -139,13 +140,13 @@ def fill_details(in_idx,index,payments_dataframe, accounts_receivables_dataframe
 @tool
 def AccessAccountsReceivable()-> DataFramePayload:
     """Function to access the accounts receivables data table in Postgres"""
-    accounts_receivables = pd.read_sql("SELECT * FROM accounts_receivable", engine)
+    accounts_receivables = pd.read_sql("SELECT * FROM accounts_receivable", conn)
     return accounts_receivables.to_dict()
 
 @tool
 def AccessPayments():
     """Function to access the payments received data table in postgress"""
-    payments = pd.read_sql("SELECT * FROM payments", engine)
+    payments = pd.read_sql("SELECT * FROM payments", conn)
     return payments.to_dict()
 
 # @tool
@@ -154,77 +155,77 @@ def AccessPayments():
 #     customers = pd.read_sql("SELECT * FROM customers", conn) 
 #     return customers
 
-@tool
-def PaymentReferenceSearch(ar: dict,  pr: dict) -> dict:
-    """Fuzzy search of payment reference string for a similarity check of each string.
-    The payments_dataframe has the output of AccessPayments as input. The accounts_receivables dataframe
-    has the outut of AccessAccountsReceivable as input.
+# @tool
+# def PaymentReferenceSearch(ar: dict,  pr: dict) -> dict:
+#     """Fuzzy search of payment reference string for a similarity check of each string.
+#     The payments_dataframe has the output of AccessPayments as input. The accounts_receivables dataframe
+#     has the outut of AccessAccountsReceivable as input.
 
-    This function should only be used after the tools AccessAccountsReceivable and AccesssPayments have been used.
+#     This function should only be used after the tools AccessAccountsReceivable and AccesssPayments have been used.
 
-    Function returns the updated Accounts Receivable and payments dataframe.
-    """
-    fuzz_threshold = int(FUZZ_RATIO_THRESHOLD)
-    payments_dataframe = pr.to_df()
-    accounts_receivables_dataframe = ar.to_df()
-    # Add additional column for payments_dataframe to categorise if payment has been matched or not.
-    #payments_dataframe['matched'] = False
+#     Function returns the updated Accounts Receivable and payments dataframe.
+#     """
+#     fuzz_threshold = int(FUZZ_RATIO_THRESHOLD)
+#     payments_dataframe = pr.to_df()
+#     accounts_receivables_dataframe = ar.to_df()
+#     # Add additional column for payments_dataframe to categorise if payment has been matched or not.
+#     #payments_dataframe['matched'] = False
 
-    try:
-        for index, row in payments_dataframe.iterrows():
-            # Try first just the payment reference information
-            print(str(row['payment_reference']))
-            pattern = r"\s"
-            string_list=re.split(pattern, str(row['payment_reference']))
-            print(string_list)
-            customer_match = False
-            invoice_match = False
-            for component in string_list:
-                component = component.strip()
-                print(f"Element: {component}")
-                if component == None:
-                    pass
-                else:
-                    # for i in range(1):
-                    #     print(f"ROUND:{i}")
+#     try:
+#         for index, row in payments_dataframe.iterrows():
+#             # Try first just the payment reference information
+#             print(str(row['payment_reference']))
+#             pattern = r"\s"
+#             string_list=re.split(pattern, str(row['payment_reference']))
+#             print(string_list)
+#             customer_match = False
+#             invoice_match = False
+#             for component in string_list:
+#                 component = component.strip()
+#                 print(f"Element: {component}")
+#                 if component == None:
+#                     pass
+#                 else:
+#                     # for i in range(1):
+#                     #     print(f"ROUND:{i}")
 
-                    if customer_match:
-                        # Invoice number match
-                        print("Starting Invoice Number Match")
-                        try:
-                            in_idx, invoice_match = invoice_number_match(dataframe=accounts_receivables_dataframe,
-                                    reference_component=component,
-                                    threshold=fuzz_threshold)
+#                     if customer_match:
+#                         # Invoice number match
+#                         print("Starting Invoice Number Match")
+#                         try:
+#                             in_idx, invoice_match = invoice_number_match(dataframe=accounts_receivables_dataframe,
+#                                     reference_component=component,
+#                                     threshold=fuzz_threshold)
                             
-                        except Exception as e:
-                            print(f"Error Invoice Match: {e}")
-                            pass
+#                         except Exception as e:
+#                             print(f"Error Invoice Match: {e}")
+#                             pass
                     
-                    else:
+#                     else:
                         
-                        print("Starting Customer Number Match")
-                        try:
-                            cs_idx, customer_match = customer_number_match(dataframe=accounts_receivables_dataframe,
-                                                reference_component=component,
-                                                threshold=fuzz_threshold)
+#                         print("Starting Customer Number Match")
+#                         try:
+#                             cs_idx, customer_match = customer_number_match(dataframe=accounts_receivables_dataframe,
+#                                                 reference_component=component,
+#                                                 threshold=fuzz_threshold)
 
-                        except Exception as e:
-                            print(f"Error Customer Match: {e}")
-                            pass
+#                         except Exception as e:
+#                             print(f"Error Customer Match: {e}")
+#                             pass
                         
-                    if invoice_match == True and customer_match == True:
-                        print("Invoice and Customer matched!")
-                        payments_dataframe.loc[index,'matched'] = True
-                        fill_details(in_idx,index, payments_dataframe,accounts_receivables_dataframe)
-                        break
+#                     if invoice_match == True and customer_match == True:
+#                         print("Invoice and Customer matched!")
+#                         payments_dataframe.loc[index,'matched'] = True
+#                         fill_details(in_idx,index, payments_dataframe,accounts_receivables_dataframe)
+#                         break
                      
-                    else:
-                      payments_dataframe.loc[index,'matched'] = False
+#                     else:
+#                       payments_dataframe.loc[index,'matched'] = False
                         
 
                 
-    except Exception as e:
-        print(f"OUTER ERROR: {e}")
-        pass
+#     except Exception as e:
+#         print(f"OUTER ERROR: {e}")
+#         pass
 
-    return DataFramePayload.from_df(accounts_receivables_dataframe)
+#     return DataFramePayload.from_df(accounts_receivables_dataframe)
