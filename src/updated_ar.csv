@@ -1,0 +1,3 @@
+invoice_number,date,customer_name,customer_number,amount,due_date,payment,payment_date,payment_id
+1,2025-05-01,Planet Express,12038,50000.0,2025-05-02,25000.0,2025-01-31,948347
+1,2025-05-01,Planet Express,12038,50000.0,2025-05-02,25000.0,2025-02-18,302947
